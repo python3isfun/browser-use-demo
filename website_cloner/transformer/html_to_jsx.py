@@ -132,7 +132,9 @@ class HTMLToJSXConverter:
 
     def convert(self, html: str, styles_map: dict = None, assets_map: dict = None) -> str:
         """Convert HTML string to JSX string."""
-        soup = BeautifulSoup(html, 'lxml')
+        # Use html.parser instead of lxml - lxml incorrectly nests void elements
+        # like <source> which breaks <picture> elements
+        soup = BeautifulSoup(html, 'html.parser')
         body = soup.find('body')
 
         if not body:
@@ -225,6 +227,26 @@ class HTMLToJSXConverter:
                 # Replace asset URLs with local paths
                 new_value = assets_map.get(value, value)
                 result['src'] = self._format_attr_value(new_value)
+
+            elif attr == 'srcset':
+                # Replace URLs in srcset (format: "url1 1x, url2 2x, url3 300w")
+                new_srcset = self._rewrite_srcset(value, assets_map)
+                result['srcSet'] = self._format_attr_value(new_srcset)
+
+            elif attr == 'data-srcset':
+                # Replace URLs in data-srcset (lazy loading)
+                new_srcset = self._rewrite_srcset(value, assets_map)
+                result['data-srcset'] = '{' + f'"{self._escape_js_string(new_srcset)}"' + '}'
+
+            elif attr == 'data-src':
+                # Replace lazy-loaded src
+                new_value = assets_map.get(value, value)
+                result['data-src'] = '{' + f'"{self._escape_js_string(new_value)}"' + '}'
+
+            elif attr == 'poster':
+                # Video poster image
+                new_value = assets_map.get(value, value)
+                result['poster'] = self._format_attr_value(new_value)
 
             elif attr == 'href':
                 result['href'] = self._format_attr_value(value)
@@ -355,3 +377,24 @@ class HTMLToJSXConverter:
             return '{' + f'"{self._escape_js_string(value)}"' + '}'
         # Simple values can use quoted syntax
         return f'"{value}"'
+
+    def _rewrite_srcset(self, srcset: str, assets_map: dict) -> str:
+        """Rewrite URLs in srcset attribute to local paths."""
+        if not srcset:
+            return srcset
+        entries = []
+        for entry in srcset.split(','):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split()
+            if parts:
+                url = parts[0]
+                descriptor = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                # Replace URL with local path if available
+                new_url = assets_map.get(url, url)
+                if descriptor:
+                    entries.append(f'{new_url} {descriptor}')
+                else:
+                    entries.append(new_url)
+        return ', '.join(entries)

@@ -44,6 +44,11 @@ class PageExtractor:
                 if response and response.status >= 400:
                     raise ExtractionError(f"HTTP {response.status}: Failed to load {self.url}")
                 page.wait_for_load_state('networkidle', timeout=30000)
+
+                # Scroll through page to trigger lazy loading
+                print("Triggering lazy-loaded images...")
+                self._scroll_page(page)
+                page.wait_for_load_state('networkidle', timeout=10000)
             except PlaywrightTimeout:
                 context.close()
                 browser.close()
@@ -106,6 +111,28 @@ class PageExtractor:
                     'url': self.url,
                     'mode': 'shallow'
                 }
+
+    def _scroll_page(self, page):
+        """Scroll through the page to trigger lazy loading."""
+        page.evaluate('''async () => {
+            const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+            const scrollHeight = document.body.scrollHeight;
+            const viewportHeight = window.innerHeight;
+
+            // Scroll down in increments
+            for (let y = 0; y < scrollHeight; y += viewportHeight * 0.8) {
+                window.scrollTo(0, y);
+                await delay(100);
+            }
+
+            // Scroll to bottom
+            window.scrollTo(0, scrollHeight);
+            await delay(300);
+
+            // Scroll back to top
+            window.scrollTo(0, 0);
+            await delay(100);
+        }''')
 
     def _extract_computed_styles(self, page) -> dict:
         """Extract computed styles for all visible elements."""
@@ -176,14 +203,66 @@ class PageExtractor:
         self.assets_dir.mkdir(parents=True, exist_ok=True)
         url_mapping = {}
 
-        # Extract image sources
+        # Extract image sources (src, srcset, data-src)
         images = page.evaluate('''() => {
             const images = [];
+
+            // Helper to parse srcset and extract URLs
+            function parseSrcset(srcset) {
+                if (!srcset) return [];
+                return srcset.split(',').map(entry => {
+                    const parts = entry.trim().split(/\\s+/);
+                    return parts[0]; // URL is always first
+                }).filter(url => url && !url.startsWith('data:'));
+            }
+
+            // Get img src and srcset
             document.querySelectorAll('img').forEach(img => {
                 if (img.src && !img.src.startsWith('data:')) {
                     images.push(img.src);
                 }
+                // srcset contains multiple URLs with size descriptors
+                if (img.srcset) {
+                    parseSrcset(img.srcset).forEach(url => images.push(url));
+                }
+                // Lazy loading attributes
+                if (img.dataset.src && !img.dataset.src.startsWith('data:')) {
+                    images.push(img.dataset.src);
+                }
+                if (img.dataset.srcset) {
+                    parseSrcset(img.dataset.srcset).forEach(url => images.push(url));
+                }
             });
+
+            // Get source elements (inside picture/video)
+            document.querySelectorAll('source').forEach(source => {
+                if (source.src && !source.src.startsWith('data:')) {
+                    images.push(source.src);
+                }
+                if (source.srcset) {
+                    parseSrcset(source.srcset).forEach(url => images.push(url));
+                }
+                // Lazy loading data attributes on source elements
+                if (source.dataset.srcset) {
+                    parseSrcset(source.dataset.srcset).forEach(url => images.push(url));
+                }
+            });
+
+            // Check for any element with common lazy-loading data attributes
+            document.querySelectorAll('[data-lazy-src], [data-original], [data-bg]').forEach(el => {
+                const lazySrc = el.dataset.lazySrc || el.dataset.original || el.dataset.bg;
+                if (lazySrc && !lazySrc.startsWith('data:')) {
+                    images.push(lazySrc);
+                }
+            });
+
+            // Get video poster images
+            document.querySelectorAll('video').forEach(video => {
+                if (video.poster && !video.poster.startsWith('data:')) {
+                    images.push(video.poster);
+                }
+            });
+
             return images;
         }''')
 
