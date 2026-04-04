@@ -31,7 +31,8 @@ class ReactGenerator:
                 .replace('>', '&gt;')
                 .replace('"', '&quot;'))
 
-    def generate(self, jsx_content: str, title: str, assets_dir: Path = None) -> Path:
+    def generate(self, jsx_content: str, title: str, assets_dir: Path = None,
+                 css_content: str = None, mode: str = 'shallow') -> Path:
         """Generate the complete Vite React project."""
         print(f"Generating React project: {self.project_name}")
 
@@ -46,9 +47,13 @@ class ReactGenerator:
         self._write_package_json()
         self._write_vite_config()
         self._write_index_html(title)
-        self._write_main_jsx()
-        self._write_cloned_page(jsx_content)
-        self._write_app_css()
+        self._write_main_jsx(mode)
+        self._write_cloned_page(jsx_content, mode)
+
+        if mode == 'full' and css_content:
+            self._write_extracted_css(css_content)
+        else:
+            self._write_app_css()
 
         # Copy assets if provided
         if assets_dir and assets_dir.exists():
@@ -111,12 +116,13 @@ export default defineConfig({
 '''
         (self.project_path / 'index.html').write_text(html)
 
-    def _write_main_jsx(self):
+    def _write_main_jsx(self, mode: str = 'shallow'):
         """Write src/main.jsx entry point."""
-        main = '''import React from 'react'
+        css_import = './styles.css' if mode == 'full' else './App.css'
+        main = f'''import React from 'react'
 import ReactDOM from 'react-dom/client'
 import ClonedPage from './ClonedPage.jsx'
-import './App.css'
+import '{css_import}'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -126,9 +132,24 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 '''
         (self.project_path / 'src' / 'main.jsx').write_text(main)
 
-    def _write_cloned_page(self, jsx_content: str):
+    def _write_cloned_page(self, jsx_content: str, mode: str = 'shallow'):
         """Write src/ClonedPage.jsx component."""
-        component = f'''import React from 'react';
+        # In full mode, don't wrap in extra div to preserve original structure
+        if mode == 'full':
+            component = f'''import React from 'react';
+
+function ClonedPage() {{
+  return (
+    <>
+      {jsx_content}
+    </>
+  );
+}}
+
+export default ClonedPage;
+'''
+        else:
+            component = f'''import React from 'react';
 
 function ClonedPage() {{
   return (
@@ -141,6 +162,14 @@ function ClonedPage() {{
 export default ClonedPage;
 '''
         (self.project_path / 'src' / 'ClonedPage.jsx').write_text(component)
+
+    def _write_extracted_css(self, css_content: str):
+        """Write src/styles.css with extracted CSS."""
+        # Add base styles at the beginning
+        base = '''/* Extracted CSS from original site */
+
+'''
+        (self.project_path / 'src' / 'styles.css').write_text(base + css_content)
 
     def _write_app_css(self):
         """Write src/App.css with base reset styles."""

@@ -22,16 +22,20 @@ def validate_url(url: str) -> bool:
               help='Output directory for the React project')
 @click.option('--name', '-n', default=None,
               help='Name of the generated project (defaults to domain name)')
+@click.option('--mode', '-m', type=click.Choice(['full', 'shallow']), default='full',
+              help='Clone mode: full (extract CSS) or shallow (computed styles)')
 @click.option('--download-assets/--no-download-assets', default=True,
               help='Download images and fonts locally')
-def clone(url: str, output: str, name: str, download_assets: bool):
+def clone(url: str, output: str, name: str, mode: str, download_assets: bool):
     """
     Clone a website and generate a React application.
 
     URL: The website URL to clone (e.g., https://example.com)
 
-    Example:
-        python -m website_cloner https://example.com -o ./output -n my-clone
+    Examples:
+        python -m website_cloner https://example.com
+        python -m website_cloner https://example.com --mode full
+        python -m website_cloner https://example.com --mode shallow -o ./output
     """
     # Validate URL
     if not validate_url(url):
@@ -47,29 +51,41 @@ def clone(url: str, output: str, name: str, download_assets: bool):
         name = parsed.netloc.replace('.', '-').replace(':', '-') or 'cloned-site'
 
     click.echo(f"Cloning {url}...")
+    click.echo(f"Mode: {mode}")
     click.echo(f"Output: {output_dir / name}")
     click.echo()
 
     # Phase 1: Extract
     click.echo("[1/3] Extracting page content...")
     try:
-        extractor = PageExtractor(url, output_dir / name)
+        extractor = PageExtractor(url, output_dir / name, mode=mode)
         page_data = extractor.extract()
     except ExtractionError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
     click.echo(f"  - Title: {page_data['title']}")
-    click.echo(f"  - Styles extracted for {len(page_data['computed_styles'])} elements")
+    if mode == 'full':
+        css_size = len(page_data.get('css', '')) / 1024
+        click.echo(f"  - CSS extracted: {css_size:.1f} KB")
+    else:
+        click.echo(f"  - Styles extracted for {len(page_data.get('computed_styles', {}))} elements")
     click.echo(f"  - Downloaded {len(page_data['assets'])} assets")
 
     # Phase 2: Transform
     click.echo("[2/3] Converting to JSX...")
-    converter = HTMLToJSXConverter()
-    jsx_content = converter.convert(
-        page_data['html'],
-        page_data['computed_styles'],
-        page_data['assets'] if download_assets else {}
-    )
+    converter = HTMLToJSXConverter(mode=mode)
+    if mode == 'full':
+        jsx_content = converter.convert(
+            page_data['html'],
+            assets_map=page_data['assets'] if download_assets else {}
+        )
+    else:
+        jsx_content = converter.convert(
+            page_data['html'],
+            page_data['computed_styles'],
+            page_data['assets'] if download_assets else {}
+        )
     click.echo("  - JSX conversion complete")
 
     # Phase 3: Generate
@@ -79,7 +95,9 @@ def clone(url: str, output: str, name: str, download_assets: bool):
     project_path = generator.generate(
         jsx_content,
         page_data['title'],
-        assets_dir if download_assets else None
+        assets_dir if download_assets else None,
+        css_content=page_data.get('css'),
+        mode=mode
     )
 
     click.echo()

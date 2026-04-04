@@ -4,6 +4,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
+from .css_extractor import CSSExtractor
+
 
 class ExtractionError(Exception):
     """Raised when page extraction fails."""
@@ -13,10 +15,11 @@ class ExtractionError(Exception):
 class PageExtractor:
     """Extract page content, styles, and assets using Playwright."""
 
-    def __init__(self, url: str, output_dir: Path):
+    def __init__(self, url: str, output_dir: Path, mode: str = 'full'):
         self.url = url
         self.output_dir = output_dir
         self.assets_dir = output_dir / 'public' / 'assets'
+        self.mode = mode  # 'full' or 'shallow'
 
     def extract(self) -> dict:
         """
@@ -53,27 +56,56 @@ class PageExtractor:
             # Extract title
             title = page.title()
 
-            # Mark elements with unique IDs and extract computed styles
-            print("Extracting styles...")
-            styles = self._extract_computed_styles(page)
+            if self.mode == 'full':
+                # Full mode: Extract actual CSS files
+                print("Extracting stylesheets...")
+                css_extractor = CSSExtractor(self.url, self.assets_dir)
+                stylesheets = css_extractor.extract_stylesheets(page)
+                css_content = css_extractor.combine_and_process(stylesheets)
+                assets = css_extractor.get_url_mapping()
 
-            # Get modified HTML (with data-clone-id attributes)
-            html = page.content()
+                # Get HTML without modifying it
+                html = page.content()
 
-            # Extract and download assets
-            print("Downloading assets...")
-            assets = self._extract_and_download_assets(page)
+                # Download remaining images
+                print("Downloading images...")
+                image_assets = self._extract_and_download_assets(page)
+                assets.update(image_assets)
 
-            context.close()
-            browser.close()
+                context.close()
+                browser.close()
 
-            return {
-                'html': html,
-                'computed_styles': styles,
-                'assets': assets,
-                'title': title,
-                'url': self.url
-            }
+                return {
+                    'html': html,
+                    'css': css_content,
+                    'assets': assets,
+                    'title': title,
+                    'url': self.url,
+                    'mode': 'full'
+                }
+            else:
+                # Shallow mode: Extract computed styles (original behavior)
+                print("Extracting computed styles...")
+                styles = self._extract_computed_styles(page)
+
+                # Get modified HTML (with data-clone-id attributes)
+                html = page.content()
+
+                # Extract and download assets
+                print("Downloading assets...")
+                assets = self._extract_and_download_assets(page)
+
+                context.close()
+                browser.close()
+
+                return {
+                    'html': html,
+                    'computed_styles': styles,
+                    'assets': assets,
+                    'title': title,
+                    'url': self.url,
+                    'mode': 'shallow'
+                }
 
     def _extract_computed_styles(self, page) -> dict:
         """Extract computed styles for all visible elements."""

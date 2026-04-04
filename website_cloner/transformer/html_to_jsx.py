@@ -126,7 +126,11 @@ class HTMLToJSXConverter:
 
     SKIP_TAGS = {'script', 'style', 'noscript', 'head', 'html'}
 
-    def convert(self, html: str, styles_map: dict, assets_map: dict = None) -> str:
+    def __init__(self, mode: str = 'shallow'):
+        """Initialize converter with mode ('full' or 'shallow')."""
+        self.mode = mode
+
+    def convert(self, html: str, styles_map: dict = None, assets_map: dict = None) -> str:
         """Convert HTML string to JSX string."""
         soup = BeautifulSoup(html, 'lxml')
         body = soup.find('body')
@@ -134,7 +138,7 @@ class HTMLToJSXConverter:
         if not body:
             return '<div>Failed to parse page</div>'
 
-        jsx = self._convert_element(body, styles_map, assets_map or {})
+        jsx = self._convert_element(body, styles_map or {}, assets_map or {})
         return jsx
 
     def _convert_element(self, element, styles_map: dict, assets_map: dict, indent: int = 0) -> str:
@@ -237,17 +241,18 @@ class HTMLToJSXConverter:
                     value = ' '.join(value)
                 result[jsx_attr] = self._format_attr_value(value)
 
-        # Add computed styles from data-clone-id
-        clone_id = element.get('data-clone-id')
-        if clone_id and clone_id in styles_map:
-            computed = styles_map[clone_id]
-            if 'style' in result:
-                # Merge with existing inline styles
-                existing = self._parse_jsx_style(result['style'])
-                existing.update(computed)
-                result['style'] = self._style_to_jsx(existing)
-            else:
-                result['style'] = self._style_to_jsx(computed)
+        # Add computed styles from data-clone-id (shallow mode only)
+        if self.mode == 'shallow':
+            clone_id = element.get('data-clone-id')
+            if clone_id and clone_id in styles_map:
+                computed = styles_map[clone_id]
+                if 'style' in result:
+                    # Merge with existing inline styles
+                    existing = self._parse_jsx_style(result['style'])
+                    existing.update(computed)
+                    result['style'] = self._style_to_jsx(existing)
+                else:
+                    result['style'] = self._style_to_jsx(computed)
 
         # Add mock handlers for interactive elements
         tag_name = element.name
