@@ -1,9 +1,13 @@
 # Generated output
 output/
-videos/
 
-# Screenshots
+# Videos (except comparison)
+videos/*
+!videos/comparison/
+
+# Screenshots (except comparison)
 *.png
+!videos/comparison/*.png
 
 # Python
 __pycache__/
